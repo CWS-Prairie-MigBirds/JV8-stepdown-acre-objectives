@@ -1,0 +1,36 @@
+#This scrip aggregates all the PUDL layers to 100m for easier mapping
+library(terra)
+library(sf)
+library(dplyr)
+
+#load layers
+phjv <- rast("Data/PUDL/PHJV_PUDLmask.tif")
+ppjv <- rast("Data/PUDL/PPJV_PUDLmask.tif")
+ngpjv <- rast("Data/PUDL/NGPJV_PUDLmask.tif")
+opjv <- rast("Data/PUDL/OPJV_PUDLmask.tif")
+pljv <- rast("Data/PUDL/PLJV_PUDLmask.tif")
+rbjv <- rast("Data/PUDL/RBPJV_PUDLmask.tif")
+rgjv <- rast("Data/PUDL/RGJV_PUDLmask.tif")
+
+#aggregate each and save
+phjv <- as.factor(phjv)
+phjv100 <- aggregate(phjv, fact = 10, fun = "modal", filename = "Data/PUDL/phjv100__.tif", overwrite = T)
+
+ppjv <- as.factor(ppjv)
+ppjv100 <- aggregate(ppjv, fact = 10, fun = "modal", filename = "Data/PUDL/ppjv100.tif")
+gc()
+ngpjv <- as.factor(ngpjv)
+ngpjv100 <- aggregate(ngpjv, fact = 10, fun = "modal", filename = "Data/PUDL/ngpjv100.tif")
+gc()
+opjv <- as.factor(opjv)
+opjv100 <- aggregate(opjv, fact = 10, fun = "modal", filename = "Data/PUDL/opjv100.tif")
+gc()
+pljv <- as.factor(pljv)
+pljv100 <- aggregate(pljv, fact = 10, fun = "modal", filename = "Data/PUDL/pljv100.tif")
+gc()
+rbjv <- as.factor(rbjv)
+rbjv100 <- aggregate(rbjv, fact = 10, fun = "modal", filename = "Data/PUDL/rbjv100.tif")
+gc()
+rgjv <- as.factor(rgjv)
+rgjv100 <- aggregate(rgjv, fact = 10, fun = "modal", filename = "Data/PUDL/rgjv100.tif")
+gc()
