@@ -4,6 +4,7 @@ library(sf)
 library(dplyr)
 
 #load layers
+#original PUDL circa 2021
 phjv <- rast("Data/PUDL/PHJV_PUDLmask.tif")
 ppjv <- rast("Data/PUDL/PPJV_PUDLmask.tif")
 ngpjv <- rast("Data/PUDL/NGPJV_PUDLmask.tif")
@@ -12,10 +13,12 @@ pljv <- rast("Data/PUDL/PLJV_PUDLmask.tif")
 rbjv <- rast("Data/PUDL/RBPJV_PUDLmask.tif")
 rgjv <- rast("Data/PUDL/RGJV_PUDLmask.tif")
 
+#new PUDL for CONUS circa 2025
+pudl <- rast("Data/PUDL/PUDL_NewCONUS/PotentiallyUndisturbedGrassShrbBareCover.tif")
+
 #aggregate each and save
 phjv <- as.factor(phjv)
 phjv100 <- aggregate(phjv, fact = 10, fun = "modal", filename = "Data/PUDL/phjv100__.tif", overwrite = T)
-
 ppjv <- as.factor(ppjv)
 ppjv100 <- aggregate(ppjv, fact = 10, fun = "modal", filename = "Data/PUDL/ppjv100.tif")
 gc()
