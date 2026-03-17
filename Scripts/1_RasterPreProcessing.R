@@ -151,6 +151,8 @@ writeRaster(aciMBGrass, "Data/Temp/aciMBGrass.tif", overwrite = T)
 gam[gam == 0] <- NA
 gam <- droplevels(gam)
 writeRaster(gam,"Data/Temp/GAM.tif", overwrite = T)
+#GAM is only being used to identify plowed pixels, so reclassify
+plowprint <- ifel((gam == 500|gam == 800), 1000, 0, filename = "Data/Temp/plowprint.tif")
 
 #PUDL (1 doesn't need any reclassifying)
 #add bare ground to potentially disturbed/other category and change to match pudl1
@@ -192,6 +194,7 @@ pudl1M_90 <- resample(pudl1M, template, method = "mode", filename = "Data/PUDL/p
 pudl1C_90 <- resample(pudl1C, template, method = "mode", filename = "Data/PUDL/pudl1C_90.tif")
 pudl2_90 <- resample(pudl2NA_rcl, template, method = "near", filename = "Data/PUDL/pudl2_90.tif") #using near method because pudl2 is already at 90m
 gam90 <- resample(gam, template, method = "mode", filename = "Data/CGR_GAM/gam90.tif", overwrite = T)
+plowprint90 <- resample(plowprint, template, method = "mode", filename = "Data/CGR_GAM/plowprint90.tif", overwrite = T)
 crisk90 <- resample(criskNA, template, method = "bilinear", filename = "Data/conRisk/conRisk90.tif", overwrite = T) #using bilinear because this raster is continuous.
 weriskS90 <- resample(weriskS_NA, template, method = "bilinear", filename = "Data/encRisk/weRiskS90.tif", overwrite = T) #using bilinear because this raster is continuous. <- resample(weriskS_NA, template, method = "bilinear", filename = "Data/conRisk/weRiskS90.tif", overwrite = T) #using bilinear because this raster is continuous.
 weriskT90 <- resample(weriskT_NA, template, method = "bilinear", filename = "Data/encRisk/weRiskT90.tif", overwrite = T) #using bilinear because this raster is continuous.
