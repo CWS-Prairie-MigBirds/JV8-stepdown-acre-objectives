@@ -152,7 +152,7 @@ gam[gam == 0] <- NA
 gam <- droplevels(gam)
 writeRaster(gam,"Data/Temp/GAM.tif", overwrite = T)
 #GAM is only being used to identify plowed pixels, so reclassify
-plowprint <- ifel((gam == 500|gam == 800), 1000, 0, filename = "Data/Temp/plowprint.tif")
+plowprint <- ifel((gam == 500|gam == 800), 10000, 0, filename = "Data/Temp/plowprint.tif", overwrite = T)
 
 #PUDL (1 doesn't need any reclassifying)
 #add bare ground to potentially disturbed/other category and change to match pudl1
@@ -211,8 +211,9 @@ weriskT90 <- resample(weriskT_NA, template, method = "bilinear", filename = "Dat
 # pudl1M_90 <- rast("Data/PUDL/pudl1M_90.tif")
 # pudl1C_90 <- rast("Data/PUDL/pudl1C_90.tif")
 # pudl2_90 <- rast("Data/PUDL/pudl2_90.tif")
-# weriskS90 <- rast("Data/encRisk/weRiskS90.tif")
-# weriskT90 <- rast("Data/encRisk/weRiskT90.tif")
+crisk <- rast("Data/conRisk/conRisk90.tif")
+weriskS90 <- rast("Data/encRisk/weRiskS90.tif")
+weriskT90 <- rast("Data/encRisk/weRiskT90.tif")
 # gc()
 
 #ensure geometries match completely across all layers
@@ -245,39 +246,43 @@ levels(pudl90)
 #2E. Bin conversion and encroachment risk rasters into categories (high and low risk)
 ##############################################################################
 #Conversion risk. Cut points obtained from Sarah Olimb
-#risk >= 42.33 = high risk = 200
-#risk < 42.33 = low risk = 100
-criskBin <- ifel(crisk < 42.33, 100, 200, filename = "Data/conRisk/crisk90Bin.tif", overwrite = T)
+#risk >= 42.33 = high risk = 2000
+#risk < 42.33 = low risk = 1000
+criskBin <- ifel(crisk < 42.33, 1000, 2000, filename = "Data/conRisk/crisk90Bin.tif", overwrite = T)
 
 #encroachment risk. Cut points obtained from Sam Cady (see "Data/encRisk/README...rtf file)
 #Shrub risk classes
-#-200 < risk <= -75 = encroached = 30
-#-75 < risk <= -25 = high risk = 20
-#-25 < risk <= 0 = low risk = 10
+#-200 < risk <= -75 = encroached = 300
+#-75 < risk <= -25 = high risk = 200
+#-25 < risk <= 0 = low risk = 100
 #create from, to, becomes reclass matrix
-rclShrub <- matrix(c(-201, -75, 30,
-                     -75,-25,20,
-                     -25,0,10),
+rclShrub <- matrix(c(-201, -75, 300,
+                     -75,-25,200,
+                     -25,0,100),
                    nrow = 3,
                    byrow = T)
 weriskS_Bin <- classify(weriskS90, rcl=rclShrub, filename = "Data/encRisk/weRisk_Sh_90Bin.tif", overwrite = T)
 
 #Tree risk classes
-#-200 < risk <= -75 = encroached = 60
-#-75 < risk <= -15 = high risk = 50
-#-15 < risk <= 0 = low risk = 40
+#-200 < risk <= -75 = encroached = 30
+#-75 < risk <= -15 = high risk = 20
+#-15 < risk <= 0 = low risk = 10
 #create from, to, becomes reclass matrix
-rclTree <- matrix(c(-201, -75, 60,
-                     -75,-15,50,
-                     -15,0,40),
+rclTree <- matrix(c(-201, -75, 30,
+                     -75,-15,20,
+                     -15,0,10),
                    nrow = 3,
                    byrow = T)
 weriskT_Bin <- classify(weriskT90, rcl=rclTree, filename = "Data/encRisk/weRisk_Tr_90Bin.tif", overwrite = T)
 
-
-
-
-
+#I was thinking of doing this, but I've decided to keep shrub and tree risk separate and combine later
+#Combine shrub and tree risk so that each pixel has the riskier of the 2 layers (encroachment trumps all, high risk trumps low risk)
+#based on category values, can just take the max
+# weriskBin <- app(c(weriskS_Bin, weriskT_Bin),
+#                               fun = max,
+#                               na.rm = TRUE,
+#                               filename = "Data/encRisk/weRisk90Bin.tif",
+#                               overwrite = TRUE)
 
 
 
