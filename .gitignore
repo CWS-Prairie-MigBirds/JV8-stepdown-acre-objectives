@@ -4,3 +4,6 @@
 .Ruserdata
 Data
 Output
+Scripts/TestScript_aggregatePUDL_100m.R
+Scripts/TestScript_ConservationActionAcres.R
+Scripts/TestScript_unusedPortions.R
