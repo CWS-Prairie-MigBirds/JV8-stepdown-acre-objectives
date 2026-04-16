@@ -7,6 +7,7 @@ library(readxl)
 library(dplyr)
 library(stringr)
 library(tidyr)
+library(ggplot2)
 
 #load excel file that assigns conservation actions to each category of grass for each JV (downloaded from JV8 Google Drive)
 file <- "data/JV_GrassToConAction.xlsx"
@@ -40,12 +41,13 @@ acresJVXstate <- read.csv("Output/Final/RiskCropAcres_jvXstate.csv") %>%
 
 #parse out JV names and create lookup table for JV acronyms
 lookup <- data.frame("JVname" = unique(acresJVXstate$JVname),
-                     "JV" = c("NGPJV", "OPJV", "PLJV", "PHJV", "PPJV", "RWBJV", "RGJV", "SJV"))
+                     "JV" = c("NGPJV", "OPJV", "PLJV", "PHJV", "PPJV", "RWBJV", "RGJV", "SJV"),
+                     "Region" = c("Northern Great Plains", "Southern Great Plains", "Southern Great Plains", "Northern Great Plains", "Northern Great Plains", "Northern Great Plains", "Southern Great Plains", "Southern Great Plains"))
 
 acresJVXstate <- left_join(acresJVXstate, lookup)
 
 #join acres and actions tables together by JV and grass ID and change to long format
-stepdown <- left_join(acresJVXstate, jvActions, by = c("ID", "JV")) %>%
+ActionToAcres <- left_join(acresJVXstate, jvActions, by = c("ID", "JV")) %>%
   pivot_longer(
     cols = c(ConAct1, ConAct2, ConAct3,
              Perc1,   Perc2,   Perc3),
@@ -63,7 +65,8 @@ stepdown <- left_join(acresJVXstate, jvActions, by = c("ID", "JV")) %>%
 #   mutate(propAcres = totalAcres / sum(totalAcres, na.rm = TRUE)) %>%
 #   ungroup()
 
-JVConAcres <- stepdown %>%
+JVConAcres <- ActionToAcres %>%
+  filter(!ConAct == "No Conservation Actions Recommended") %>%
   summarise(totalAcres = sum(ConActAcres, na.rm = TRUE),
             JV = first(JV),
             .by = c(jv_state, ConAct)) %>%
@@ -76,32 +79,53 @@ JVConAcres %>%
 
 
 #Inspect groups to ensure this is doing what I want
-groups <- stepdown %>% group_by(jv_state, ConAct) %>% group_keys()
+groups <- ActionToAcres %>% 
+  filter(!ConAct == "No Conservation Actions Recommended") %>%
+  group_by(jv_state, ConAct) %>% group_keys()
 
 #import JV8-wide acre objectives
 jv8 <- read.csv("data/jv8AcreObj.csv")
 
-stepdownFinal <- left_join(JVConAcres, jv8) %>%
-  filter(!ConAct == "No Conservation Actions Recommended") %>%
+#multiply JV8-wide acres objectives by proportions in each jv x state
+stepdown_long <- left_join(JVConAcres, jv8) %>%
   mutate(acreObj = round(propAcres * Acres)) %>%
-  select(JV, jv_state, ConAct, totalAcres, propAcres, acreObj) %>%
+  left_join(lookup)
+
+#summarize by region in wide format
+acresXregion <- stepdown_long %>%
+  summarize(acreObj = sum(acreObj), .by = c(Region, ConAct)) %>%
   pivot_wider(names_from = ConAct, values_from = acreObj)
 
 #summarize by JV
-stepdownXjv <- stepdownFinal %>%
+acresXjv <- stepdown_long %>%
   summarize(acreObj = sum(acreObj), .by = c(JV, ConAct)) %>%
   pivot_wider(names_from = ConAct, values_from = acreObj) %>%
   select(JV, Protection, Restoration, Enhancement, "Persistence/Retention") %>%
   mutate(JV = factor(JV, levels = c("PHJV", "PPJV", "NGPJV", "RWBJV", "PLJV", "OPJV", "RGJV"))) %>%
   arrange(JV)
 
+
+#summarize by JV x State/province in wide format
+acresXjvState <- stepdown_long %>%
+  select(jv_state, ConAct, acreObj) %>%
+  pivot_wider(names_from = ConAct, values_from = acreObj) %>%
+  mutate(JVname = str_extract(jv_state, "^[^_]+")) %>%
+  left_join(lookup) %>%
+  select(JV, jv_state, Protection, Restoration, Enhancement, "Persistence/Retention") %>%
+  mutate(JV = factor(JV, levels = c("PHJV", "PPJV", "NGPJV", "RWBJV", "PLJV", "OPJV", "RGJV"))) %>%
+  arrange(JV)
+
 #make sure acres sum to JV8-wide acres objectives for each conservation action
-stedownFinal %>%
+stepdown_long %>%
   summarize(check = sum(acreObj), .by = ConAct)
 
+#export results in wide format
+write.csv(acresXregion, "Output/Final/StepdownObj_region.csv", row.names = F)
+write.csv(acresXjv, "Output/Final/StepdownObj_jv.csv", row.names = F)
+write.csv(acresXjvState, "Output/Final/StepdownObj_jvState.csv", row.names = F)
 
 
 #Notes about decisions made
 # 1. Only PPJV consistently provided percentages for tertiary conservation action
-# 2. RWBJV has <1% for protection in tertiary category so ignoring as negligable for now.
+# 2. RWBJV has <1% for protection in tertiary category so ignoring as negligible for now.
 # 3. RGJV has protection for tertiary in 3 grass categories, but no percentage, so ignoring for now.
