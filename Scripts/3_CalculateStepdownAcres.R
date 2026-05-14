@@ -10,7 +10,7 @@ library(tidyr)
 library(ggplot2)
 
 #load excel file that assigns conservation actions to each category of grass for each JV (downloaded from JV8 Google Drive)
-file <- "data/JV_GrassToConAction.xlsx"
+file <- "Data/JV_GrassToConAction_updated_12May2026.xlsx"
 
 # Get all sheet names and remove those not needed
 sheets <- excel_sheets(file) |>
@@ -22,14 +22,14 @@ data_list <- lapply(sheets, function(s) {
     rename("ConRisk" = "Agriculture Conversion Risk (Olimb and Robinson)",
            "EncRisk" = "Woody Encroachment Risk (RAP: tree and shrub)",
            "Cover" = "Landcover (PUDL)",
+           "PercOfAcres" = "Target Proportion (Ambitious and Realistic)",
            "ConAct1" = "Primary Conservation Action",
            "Perc1" = "Percent of Acres with Primary Conservation Action",
            "ConAct2" = "Secondary Conservation Action",
            "Perc2" = "Percent of Acres with Secondary Conservation Action",
            "ConAct3" = "Tertiary Conservation Action",
-           "Perc3" = "Comments") %>%
-    select("ID", "ConAct1", "ConAct2", "ConAct3", "Perc1", "Perc2","Perc3") %>%
-    mutate(Perc3 = as.numeric(Perc3))
+           "Perc3" = "Percent of Acres with Tertiary Conservation Action") %>%
+    select("ID", "PercOfAcres", "ConAct1", "ConAct2", "ConAct3", "Perc1", "Perc2","Perc3") 
 })
 names(data_list) <- sheets
 
@@ -39,25 +39,45 @@ jvActions <- bind_rows(data_list, .id = "JV")
 acresJVXstate <- read.csv("Output/Final/RiskCropAcres_jvXstate.csv") %>%
   mutate(JVname = str_extract(jv_state, "^[^_]+"))
 
+#load table with acres of each grass category in each FWS region and extract JV to its own column
+acresFWSxJV <- read.csv("Output/Final/RiskCropAcres_fws.csv") %>%
+  mutate(JVname = str_extract(fws_jv, "(?<=_).*"))
+
 #parse out JV names and create lookup table for JV acronyms
 lookup <- data.frame("JVname" = unique(acresJVXstate$JVname),
                      "JV" = c("NGPJV", "OPJV", "PLJV", "PHJV", "PPJV", "RWBJV", "RGJV", "SJV"),
                      "Region" = c("Northern Great Plains", "Southern Great Plains", "Southern Great Plains", "Northern Great Plains", "Northern Great Plains", "Northern Great Plains", "Southern Great Plains", "Southern Great Plains"))
 
 acresJVXstate <- left_join(acresJVXstate, lookup)
+acresFWSxJV <- left_join(acresFWSxJV, lookup)
 
 #join acres and actions tables together by JV and grass ID and change to long format
 ActionToAcres <- left_join(acresJVXstate, jvActions, by = c("ID", "JV")) %>%
+  mutate(TargetAcres = acreMil * (PercOfAcres/100)) %>%#multiply total acres by percent of acres target set by JV for each grass category
   pivot_longer(
     cols = c(ConAct1, ConAct2, ConAct3,
              Perc1,   Perc2,   Perc3),
     names_to = c(".value", "ConNum"),
     names_pattern = "(ConAct|Perc)(\\d)"
   ) %>%
-  mutate(ConActAcres = acreMil * (Perc/100)) %>% #calculate acres for each conservation action in each jurasdiction (acreMil x Perc)
+  mutate(ConActAcres = TargetAcres * (Perc/100)) %>% #calculate acres for each conservation action in each jurasdiction (acreMil x Perc)
   filter(!is.na(ConAct) & !is.na(Perc)) #will be NAs if certain categories don't have conservation actions associated with them
 
-#sum acres for each conservation action and jurasdiction
+#repeat with FWS table
+ActionsToAcres_fws <- left_join(acresFWSxJV, jvActions, by = c("ID", "JV")) %>%
+  mutate(TargetAcres = acreMil * (PercOfAcres/100)) %>%#multiply total acres by percent of acres target set by JV for each grass category
+  pivot_longer(
+    cols = c(ConAct1, ConAct2, ConAct3,
+             Perc1,   Perc2,   Perc3),
+    names_to = c(".value", "ConNum"),
+    names_pattern = "(ConAct|Perc)(\\d)"
+  ) %>%
+  mutate(ConActAcres = TargetAcres * (Perc/100), #calculate acres for each conservation action in each jurasdiction (acreMil x Perc)
+         fws_region = str_extract(fws_jv, "^[^_]+")) %>% 
+  filter(!is.na(ConAct) & !is.na(Perc)) #will be NAs if certain categories don't have conservation actions associated with them
+
+
+#sum acres for each conservation action and jurisdiction
 # JVConAcres <- stepdown %>%
 #   group_by(jv_state, ConAct) %>%
 #   summarize(totalAcres = sum(ConActAcres, na.rm = T)) %>%
@@ -73,15 +93,29 @@ JVConAcres <- ActionToAcres %>%
   mutate(propAcres = totalAcres / sum(totalAcres),
          .by = ConAct)
 
+#repeat for FWS regions
+fwsConAcres <- ActionsToAcres_fws %>%
+  filter(!ConAct == "No Conservation Actions Recommended") %>%
+  summarise(totalAcres = sum(ConActAcres, na.rm = TRUE),
+           .by = c(fws_region, ConAct)) %>%
+  mutate(propAcres = totalAcres / sum(totalAcres),
+         .by = ConAct)
+
 #make sure proportions sum to 1 for each conservation action
 JVConAcres %>%
   summarize(check = sum(propAcres), .by = ConAct)
 
+fwsConAcres %>%
+  summarize(check = sum(propAcres), .by = ConAct)
 
 #Inspect groups to ensure this is doing what I want
 groups <- ActionToAcres %>% 
   filter(!ConAct == "No Conservation Actions Recommended") %>%
   group_by(jv_state, ConAct) %>% group_keys()
+
+groups_fws <- ActionsToAcres_fws %>% 
+  filter(!ConAct == "No Conservation Actions Recommended") %>%
+  group_by(fws_region, ConAct) %>% group_keys()
 
 #import JV8-wide acre objectives
 jv8 <- read.csv("data/jv8AcreObj.csv")
@@ -90,6 +124,10 @@ jv8 <- read.csv("data/jv8AcreObj.csv")
 stepdown_long <- left_join(JVConAcres, jv8) %>%
   mutate(acreObj = round(propAcres * Acres)) %>%
   left_join(lookup)
+
+#repeat for FWS regions
+stepdown_long_fws <- left_join(fwsConAcres, jv8) %>%
+  mutate(acreObj = round(propAcres * Acres)) 
 
 #summarize by region in wide format
 acresXregion <- stepdown_long %>%
@@ -115,14 +153,23 @@ acresXjvState <- stepdown_long %>%
   mutate(JV = factor(JV, levels = c("PHJV", "PPJV", "NGPJV", "RWBJV", "PLJV", "OPJV", "RGJV"))) %>%
   arrange(JV)
 
+#summarize by FWS region in wide format
+acresXfws <- stepdown_long_fws %>%
+  select(fws_region, ConAct, acreObj) %>%
+  pivot_wider(names_from = ConAct, values_from = acreObj)
+stepdown_long_fws %>%
+  summarize(check = sum(acreObj), .by = ConAct)
+
+
 #make sure acres sum to JV8-wide acres objectives for each conservation action
 stepdown_long %>%
   summarize(check = sum(acreObj), .by = ConAct)
 
 #export results in wide format
-write.csv(acresXregion, "Output/Final/StepdownObj_region.csv", row.names = F)
-write.csv(acresXjv, "Output/Final/StepdownObj_jv.csv", row.names = F)
-write.csv(acresXjvState, "Output/Final/StepdownObj_jvState.csv", row.names = F)
+write.csv(acresXregion, "Output/Final/StepdownObj_region_V2.csv", row.names = F)
+write.csv(acresXjv, "Output/Final/StepdownObj_jv_V2.csv", row.names = F)
+write.csv(acresXjvState, "Output/Final/StepdownObj_jvState_V2.csv", row.names = F)
+write.csv(acresXfws, "Output/Final/StepdownObj_FWSRegions_V2.csv", row.names = F)
 
 
 #Notes about decisions made

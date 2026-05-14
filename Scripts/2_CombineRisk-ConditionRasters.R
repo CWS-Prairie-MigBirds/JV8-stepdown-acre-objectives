@@ -27,7 +27,11 @@ weriskT_Bin <- rast("Data/encRisk/weRisk_Tr_90Bin.tif")
 
 #restrict the analysis to areas where jv8, pudl, plowprint, and WE risk have values. Conversion risk has a more restrictive geographic focus (no mexico), but I'll assume 
 #all grass pixels in Mexico are at risk
-mask <- ifel(!is.na(pudl90) & !is.na(pp90) & !is.na(jvRast), 1, NA, filename = "Output/stepdownMask.tif", overwrite = T)
+#Only run the below once.
+#mask <- ifel(!is.na(pudl90) & !is.na(pp90) & !is.na(jvRast), 1, NA, filename = "Output/stepdownMask.tif", overwrite = T)
+
+#load mask if the above has already been run
+mask <- rast("Output/stepdownMask.tif")
 
 #rasterize JV/state polygons
 jv <- st_read("Data/JVs/North_American_Joint_Ventures_Albers_121521_Revision.shp") %>%
@@ -61,6 +65,32 @@ jvRast <- rasterize(jvState, pp90, field="jv_state") %>%
   mask(mask, filename = "Data/JVs/jv8stateRast.tif", overwrite = T)
 
 jvRast <- mask(jvRast, mask, filename = "Data/JVs/jv8stateRastMask.tif", overwrite = T)
+
+#rasterize USFWS region polygon, also including Canada and Mexico, intersected with JV polygon
+fws <- st_read("Data/USFWS_regions/FWS_Legacy_Regional_Boundaries.shp") %>%
+  filter(!REGION %in% c(7,1,8,5)) %>% #removing regions that are clearly outside JV8
+  st_transform(crs(pp90)) %>%
+  select(REGNAME)
+
+can_union <- can |>
+  summarise(geometry = st_union(geometry)) %>%
+  mutate(REGNAME = "Canada") %>%
+  select(REGNAME, geometry)
+mex_union <- mex |>
+  summarise(geometry = st_union(geometry)) %>%
+  mutate(REGNAME = "Mexico") %>%
+  select(REGNAME, geometry)
+
+canmex <- rbind(can_union, mex_union) %>%
+  st_transform(crs(pp90))
+
+fws_canmex <- rbind(fws,canmex)
+
+fwsJV <- st_intersection(fws_canmex, jv) %>%
+  mutate(fws_jv = paste(REGNAME, JV, sep = "_"))
+
+fwsRast <- rasterize(fwsJV, pp90, field = "fws_jv") %>%
+  mask(mask, filename = "Data/USFWS_regions/fwsJVRast.tif")
 
 #areas missing from crisk are primarily in Mexico. After chatting with Arvind Punjabi, I've decided to assume all remaining grasslands in Mexico are at a high risk of conversion
 #There are a lot of pixels outside of Mexico that are missing conversion risk predictions. Here's what I'm thinking:
@@ -269,11 +299,11 @@ rcl <- rbind(IDplowed, IDother, IDLowLowUnd, IDLowLowDis, IDLowLowShr,
 setdiff(as.numeric(RAT$ID), rcl[,1])
 
 #reclassigy
-sdRiskCover_rcl <- classify(sdRiskCover, rcl = rcl, filename ="Output/Final/sdRiskCover_rcl.tif", overwrite = T)
+sdRiskCover_rcl <- classify(sdRiskCover, rcl = rcl, filename = "Output/Final/sdRiskCover_JV8.tif", overwrite = T)
 plot(sdRiskCover_rcl)
 
 #load again if starting here
-sdRiskCover_rcl <- rast("Output/sdRiskCover_rcl.tif") %>%
+sdRiskCover_rcl <- rast("Output/Final/sdRiskCover_JV8.tif") %>%
   as.factor()
 levels(sdRiskCover_rcl)
 
@@ -323,11 +353,26 @@ acresJV <- acresJVXstate %>%
   summarize(acreMil = sum(acreMil, na.rm = TRUE), .groups = "drop") %>%
   arrange(JV, ID)
 
+#calcumate number of pixels within each catagory that occur within each USFWS region and Canada and Mexico
+fwsRast <- rast("Data/USFWS_regions/fwsJVRast.tif")
+catFreq_fws <- crosstab(c(sdRiskCover_rcl, fwsRast), long = T)
+
+#modify and join to RAT
+acresFWS <- catFreq_fws %>%
+  filter(!(fws_jv %in% c("Canada_Prairie Pothole", "Mountain Prairie Region_Oaks and Prairies"))) %>%
+  rename(ID = sum) %>%
+  mutate(acreMil = n * prod(res(sdRiskCover_rcl)) / 4047 /1000000,
+         ID = as.numeric(ID)) %>% #calculate area in millions of acres
+  left_join(RAT_final) %>% #join with RAT
+  select(fws_jv, ConRisk, EncRisk, Cover, ID, acreMil) %>% #select and reorder columns
+  arrange(fws_jv)
+
 #4. Export Raster Attribute table and area summary tables
 #Export stepdown risk-cover rasters for all of JV8 and each JV
 write.csv(RAT_final, "Output/Final/sdRiskCrop_IDs.csv", row.names = F)
 write.csv(acresJV, "Output/Final/RiskCropAcres_jv.csv", row.names = F)
 write.csv(acresJVXstate, "Output/Final/RiskCropAcres_jvXstate.csv", row.names = F)
+write.csv(acresFWS, "Output/Final/RiskCropAcres_fws.csv", row.names = F)
 
 #crop and mask to each JV and export
 #get JV names and raster ids
