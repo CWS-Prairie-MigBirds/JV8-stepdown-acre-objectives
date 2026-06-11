@@ -4,12 +4,13 @@
 #Feb 11, 2026
 ############################################################
 
-#This scrip conducts pre processing steps to rasters representing grassland condition (Canadian Prairie Grassland Inventory and PUDL V1 and V2) and grassland risk (cropland conversion risk and woody encroachement risk),
+#This scrip conducts pre processing steps to rasters representing grassland condition (PUDL V1 and V2) 
+#and grassland risk (cropland conversion risk and woody encroachement risk).
 #Pre processing includes reprojecting, resampling, mosaicing, and snapping all rasters together and binning continuous risk rasters into risk categories.
 #A different dataset (or combination of datasets) for grassland condition will be used for each JV:
-  #1. PHJV: Canadian Prairie Grassland Inventory
-  #2. PPJV, NGPJV, OPJV, PLJV, RBJV, and SNJ: PUDL V2
-  #3. RGJV: PUDL V1 (for Mexico) and PUDL V2 for USA portion
+  #1. PHJV: PUDL V1
+  #2. PPJV, NGPJV, OPJV, PLJV, RBJV, and SNJ (USA portion): PUDL V2
+  #3. RGJV: PUDL V1 (for Mexico portion) and PUDL V2 (for USA portion)
 
 #load libraries
 library(terra)
@@ -22,25 +23,28 @@ library(rnaturalearth)
 #1A. Grassland condition layers
 ###############################
 
-#Canadian Prairie Grassland Inventory
-cpgiAB <- rast("Data/CPGI/AB.tif")
-cpgiSK <- rast("Data/CPGI/SK.tif")
-cpgiMB <- rast("Data/CPGI/MB.tif")
+######################################################################################
+#This section is not being used for the current analysis. May explore in the future
+# #Canadian Prairie Grassland Inventory
+# cpgiAB <- rast("Data/CPGI/AB.tif")
+# cpgiSK <- rast("Data/CPGI/SK.tif")
+# cpgiMB <- rast("Data/CPGI/MB.tif")
+# 
+# #CPGI Attribute Table
+# #0 = Other cover
+# #2 = Tame
+# #3 = Native
+# #5 = Mixed
+# 
+# #Annual Crop Inventory
+# #CPGI seems to miss-classify some non-grass cover (e.g.urban, water, wetland, shrub, crop, and forest) as various types of grass
+# #Use the 2024 Annual Crop Inventory to clip out non-grass cover types
+# aciAB <- rast("Data/ACI/aci_2024_ab_v2.tif")
+# aciSK <- rast("Data/ACI/aci_2024_sk_v2.tif")
+# aciMB <- rast("Data/ACI/aci_2024_mb_v2.tif")
+#######################################################################################
 
-#CPGI Attribute Table
-#0 = Other cover
-#2 = Tame
-#3 = Native
-#5 = Mixed
-
-#Annual Crop Inventory
-#CPGI seems to miss-classify some non-grass cover (e.g.urban, water, wetland, shrub, crop, and forest) as various types of grass
-#Use the 2024 Annual Crop Inventory to clip out non-grass cover types
-aciAB <- rast("Data/ACI/aci_2024_ab_v2.tif")
-aciSK <- rast("Data/ACI/aci_2024_sk_v2.tif")
-aciMB <- rast("Data/ACI/aci_2024_mb_v2.tif")
-
-#Potentially Undistureb Land layers
+#Potentially Undisturbed Land layers
 #Version1 (for Canada and Mexico only)
 pudl1M <- rast("Data/PUDL/RGJV_PUDLmask.tif")
 pudl1C <- rast("Data/PUDL/PHJV_PUDLmask.tif")
@@ -110,13 +114,13 @@ compareGeom(weriskS, weriskT)
 ##########################################
 #2A. first project to crs of GAM (except PUDL1M and PUDL1C, which is already in GAM crs)
 ##########################################
-cpgiABNA <- project(cpgiAB, crs(gam), method = "near", filename = "Data/Temp/cpgiABNA.tif")
-cpgiSKNA <- project(cpgiSK, crs(gam), method = "near", filename = "Data/Temp/cpgiSKNA.tif")
-cpgiMBNA <- project(cpgiMB, crs(gam), method = "near", filename = "Data/Temp/cpgiMBNA.tif")
-
-aciABNA <- project(aciAB, crs(gam), method = "near", filename = "Data/Temp/aciABNA.tif")
-aciSKNA <- project(aciSK, crs(gam), method = "near", filename = "Data/Temp/aciSKNA.tif")
-aciMBNA <- project(aciMB, crs(gam), method = "near", filename = "Data/Temp/aciMBNA.tif")
+# cpgiABNA <- project(cpgiAB, crs(gam), method = "near", filename = "Data/Temp/cpgiABNA.tif")
+# cpgiSKNA <- project(cpgiSK, crs(gam), method = "near", filename = "Data/Temp/cpgiSKNA.tif")
+# cpgiMBNA <- project(cpgiMB, crs(gam), method = "near", filename = "Data/Temp/cpgiMBNA.tif")
+# 
+# aciABNA <- project(aciAB, crs(gam), method = "near", filename = "Data/Temp/aciABNA.tif")
+# aciSKNA <- project(aciSK, crs(gam), method = "near", filename = "Data/Temp/aciSKNA.tif")
+# aciMBNA <- project(aciMB, crs(gam), method = "near", filename = "Data/Temp/aciMBNA.tif")
 
 pudl2NA <- project(pudl2, crs(gam), method = "near", filename = "Data/Temp/pudl2NA.tif")
 
@@ -130,21 +134,21 @@ weriskT_NA <- project(weriskT, crs(gam), method = "bilinear", filename = "Data/T
 #########################################
 #Annual Crop Inventory
 #Used as a mask to clip out other cover types, so only need 3 classes: native grass (110), tame grass (122) and non-grass (all other values)
-aciABGrass <- 0 * aciABNA
-aciABGrass[aciABNA == 110] <- 1
-aciABGrass[aciABNA == 122] <- 2
-
-aciSKGrass <- 0 * aciSKNA 
-aciSKGrass[aciSKNA == 110] <- 1
-aciSKGrass[aciSKNA == 122] <- 2
-
-aciMBGrass <- 0 * aciMBNA
-aciMBGrass[aciMBNA == 110] <- 1
-aciMBGrass[aciMBNA == 122] <- 2
-
-writeRaster(aciABGrass, "Data/Temp/aciABGrass.tif", overwrite = T)
-writeRaster(aciSKGrass, "Data/Temp/aciSKGrass.tif", overwrite = T)
-writeRaster(aciMBGrass, "Data/Temp/aciMBGrass.tif", overwrite = T)
+# aciABGrass <- 0 * aciABNA
+# aciABGrass[aciABNA == 110] <- 1
+# aciABGrass[aciABNA == 122] <- 2
+# 
+# aciSKGrass <- 0 * aciSKNA 
+# aciSKGrass[aciSKNA == 110] <- 1
+# aciSKGrass[aciSKNA == 122] <- 2
+# 
+# aciMBGrass <- 0 * aciMBNA
+# aciMBGrass[aciMBNA == 110] <- 1
+# aciMBGrass[aciMBNA == 122] <- 2
+# 
+# writeRaster(aciABGrass, "Data/Temp/aciABGrass.tif", overwrite = T)
+# writeRaster(aciSKGrass, "Data/Temp/aciSKGrass.tif", overwrite = T)
+# writeRaster(aciMBGrass, "Data/Temp/aciMBGrass.tif", overwrite = T)
 
 #GAM
 #change mask pixels to NA
@@ -184,12 +188,12 @@ pudl2NA_rcl <- rast("Data/Temp/pudl2NArcl.tif")
 template <- rast(ext(gam), resolution = res(pudl2NA_rcl), crs = crs(gam))
 
 #resample all rasters to match the template
-cpgiAB90 <- resample(cpgiABNA, template, method = "mode", filename = "Data/CPGI/AB90.tif")
-cpgiSK90 <- resample(cpgiSKNA, template, method = "mode", filename = "Data/CPGI/SK90.tif")
-cpgiMB90 <- resample(cpgiMBNA, template, method = "mode", filename = "Data/CPGI/MB90.tif")
-aciAB90 <- resample(aciABGrass, template, method = "mode", filename = "Data/ACI/aciAB90.tif", overwrite = T)
-aciSK90 <- resample(aciSKGrass, template, method = "mode", filename = "Data/ACI/aciSK90.tif", overwrite = T)
-aciMB90 <- resample(aciMBGrass, template, method = "mode", filename = "Data/ACI/aciMB90.tif", overwrite = T)
+# cpgiAB90 <- resample(cpgiABNA, template, method = "mode", filename = "Data/CPGI/AB90.tif")
+# cpgiSK90 <- resample(cpgiSKNA, template, method = "mode", filename = "Data/CPGI/SK90.tif")
+# cpgiMB90 <- resample(cpgiMBNA, template, method = "mode", filename = "Data/CPGI/MB90.tif")
+# aciAB90 <- resample(aciABGrass, template, method = "mode", filename = "Data/ACI/aciAB90.tif", overwrite = T)
+# aciSK90 <- resample(aciSKGrass, template, method = "mode", filename = "Data/ACI/aciSK90.tif", overwrite = T)
+# aciMB90 <- resample(aciMBGrass, template, method = "mode", filename = "Data/ACI/aciMB90.tif", overwrite = T)
 pudl1M_90 <- resample(pudl1M, template, method = "mode", filename = "Data/PUDL/pudl1M_90.tif")
 pudl1C_90 <- resample(pudl1C, template, method = "mode", filename = "Data/PUDL/pudl1C_90.tif")
 pudl2_90 <- resample(pudl2NA_rcl, template, method = "near", filename = "Data/PUDL/pudl2_90.tif") #using near method because pudl2 is already at 90m

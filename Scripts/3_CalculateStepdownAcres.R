@@ -2,6 +2,9 @@
 #Written by: Barry Robinson
 #Date: April 15, 2026
 
+#This script assigns conservation actions to each grass condition-risk category based on input from each JV, then calculates the proprotion of acres assigned to each
+#conservation action that occur within each JV x state/province. These proportions are used to allocate/stepdown the JV8-wide acre objectives to each JV x state/province.
+
 #load libraries
 library(readxl)
 library(dplyr)
