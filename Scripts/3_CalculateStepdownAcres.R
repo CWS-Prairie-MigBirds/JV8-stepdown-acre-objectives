@@ -13,11 +13,11 @@ library(tidyr)
 library(ggplot2)
 
 #load excel file that assigns conservation actions to each category of grass for each JV (downloaded from JV8 Google Drive)
-file <- "Data/JV_GrassToConAction_updated_12May2026.xlsx"
+file <- "Data/JV_GrassToConAction_updated_21Aug2026.xlsx"
 
 # Get all sheet names and remove those not needed
 sheets <- excel_sheets(file) |>
-  setdiff(c("Orig", "SJV_Arizona"))
+  setdiff(c("JV Stepdown Objectives V1", "JV Stepdown Objectives V2", "Orig", "SJV_Arizona"))
 
 # Read all sheets into a named list and combine into a single table
 data_list <- lapply(sheets, function(s) {
@@ -36,7 +36,15 @@ data_list <- lapply(sheets, function(s) {
 })
 names(data_list) <- sheets
 
-jvActions <- bind_rows(data_list, .id = "JV")
+jvActions <- bind_rows(data_list, .id = "JV") |>
+  mutate(
+    PercOfAcres = case_when(
+      JV == "OPJV" ~ PercOfAcres*100, #OPJV changed the Target proportion column to % in Excel so these need to be multiplied by 100
+      TRUE ~ PercOfAcres
+      )
+    )
+
+
 
 #load table with acres of each grass category in each JV x state/province
 acresJVXstate <- read.csv("Output/Final/RiskCropAcres_jvXstate.csv") %>%
@@ -169,10 +177,10 @@ stepdown_long %>%
   summarize(check = sum(acreObj), .by = ConAct)
 
 #export results in wide format
-write.csv(acresXregion, "Output/Final/StepdownObj_region_V2.csv", row.names = F)
-write.csv(acresXjv, "Output/Final/StepdownObj_jv_V2.csv", row.names = F)
-write.csv(acresXjvState, "Output/Final/StepdownObj_jvState_V2.csv", row.names = F)
-write.csv(acresXfws, "Output/Final/StepdownObj_FWSRegions_V2.csv", row.names = F)
+write.csv(acresXregion, "Output/Final/StepdownObj_region_V3.csv", row.names = F)
+write.csv(acresXjv, "Output/Final/StepdownObj_jv_V3.csv", row.names = F)
+write.csv(acresXjvState, "Output/Final/StepdownObj_jvState_V3.csv", row.names = F)
+write.csv(acresXfws, "Output/Final/StepdownObj_FWSRegions_V3.csv", row.names = F)
 
 
 #Notes about decisions made
