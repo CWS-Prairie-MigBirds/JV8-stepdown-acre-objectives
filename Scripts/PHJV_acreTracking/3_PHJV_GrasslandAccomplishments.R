@@ -275,6 +275,60 @@ county.acres.fixed |> filter(CSDNAME == "Taber")
 
 #Inspect shapefile and export
 plot(county.acres.fixed |> select(Restoration))
-plot(county.acres.fixed |> select(Retention))
+plot(county.acres.fixed |> select(Retention), reset = FALSE)
 st_write(county.acres.fixed, "Output/PHJV_AcreTracking/PHJV_Grass_acresXcounty.shp")
+
+
+#3. Estimate acre accomplishements that occured within Upland bird priority areas
+#Import upland bird priority areas
+pa <- st_read("Data/AcreTracking/Upland_smooth.shp") |>
+  st_transform(st_crs(county.acres.fixed))
+
+#query counties that overlap at least 50% of their area with Upland bird priority areas
+overlapingTest <- county.acres.fixed |>
+  mutate(total_area = st_area(geometry)) |>
+  st_filter(pa) |>
+  st_intersection(pa) |>
+  mutate(overlap_pct = as.numeric(st_area(geometry) / total_area)) |>
+  filter(overlap_pct >=0.30) |>
+  mutate(CSDUnique = paste(CSDNAME, CSDTYPE, Province, sep = "_")) |>
+  pull(CSDUnique)
+
+pa.counties <- county.acres.fixed |>
+  mutate(CSDUnique = paste(CSDNAME, CSDTYPE, Province, sep = "_")) |>
+  filter(CSDUnique %in% overlapingTest)
+
+#plot and inspect to fine-tune overlap threshold
+plot(pa.counties |> select(Retention), reset = FALSE)
+plot(st_geometry(pa), add = TRUE, border = "red", lwd = 2)
+
+#calculate acres by activity and province
+pa.acres.summary <- pa.counties |>
+  group_by(Province) |>
+  summarize(Restoration = sum(Restoration),
+            Retention = sum(Retention)) |>
+  st_drop_geometry()
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
