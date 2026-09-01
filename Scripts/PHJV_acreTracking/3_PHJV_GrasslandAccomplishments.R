@@ -47,7 +47,7 @@ acre.total <- data.long |>
   summarize(sum(Acres))
 
 
-#2. Summarize spatially (by county) relative to Landbird priority areas
+#2. Summarize spatially (by county)
 #load county shapefile
 counties <- st_read("Data/CanadianCounties/lcsd000b21a_e.shp")
 #load PHJV boundary and transcorm to CRS of counties
@@ -56,21 +56,26 @@ phjv <- st_read("Data/JVs/jv8.shp") |>
   select(JV) |>
   st_transform(st_crs(counties))
 
-#query those counties that intersect with PHJV
-counties.phjv <- st_filter(counties, phjv) |>
-  filter(PRUID != "59")
+counties <- counties |> st_make_valid()
+phjv <- phjv |> st_make_valid()
 
-# data.long |>
-#   filter(Province == "Alberta") |>
-#   pull(Municipality) |>
-#   unique()
-# 
-# counties.phjv |>
-#   filter(PRUID == "48") |>
-#   pull(CSDNAME) |>
-#   unique()
+#query those counties that have at least 5% of their area within the PHJV
+qualifying_ids <- counties |>
+  mutate(total_area = st_area(geometry)) |>
+  st_filter(phjv) |>
+  st_intersection(phjv) |>
+  mutate(overlap_pct = as.numeric(st_area(geometry) / total_area)) |>
+  filter(overlap_pct >=0.05) |>
+  pull(CSDUID)
 
-#The names don't match well, so modify names in data and shapefile so they match (this section written by claude.ai)
+counties.phjv <- counties |>
+  filter(CSDUID %in% qualifying_ids, PRUID != "59")
+
+plot(counties.phjv |> select(PRUID), reset = FALSE)
+plot(st_geometry(phjv), add = TRUE, border = "red", lwd = 2)
+
+
+#The county names don't match well between acre tracking data and shapefile, so modify names in data and shapefile so they match (this section written by claude.ai)
 
 # ---------------------------------------------------------------
 # Shared name-cleaning function (handles issues common to all provinces)
@@ -157,13 +162,14 @@ sk_shp <- counties.phjv |>
   mutate(
     base_name  = str_remove(CSDNAME, "\\s*No\\.\\s*\\d+$"),
     name_clean = norm_name(base_name)
-  )
+  ) |>
+  st_drop_geometry()
 
 data.long_sk <- data.long |>
   filter(Province == "Saskatchewan", Municipality != "Saskatchewan (provincial level)") |>
   mutate(name_clean = norm_name(Municipality)) |>
   left_join(sk_shp |> select(CSDNAME, name_clean), by = "name_clean") |>
-  select(-name_clean)
+  select(-c(name_clean, Municipality_std))
 
 # =================================================================
 # MANITOBA — mostly direct match; disambiguate RM vs city/town duplicates
@@ -173,13 +179,14 @@ mb_shp <- counties.phjv |>
   mutate(name_clean = norm_name(CSDNAME)) |>
   group_by(name_clean) |>
   filter(n() == 1 | CSDTYPE == "RM") |>
-  ungroup()
+  ungroup() |>
+  st_drop_geometry()
 
 data.long_mb <- data.long |>
   filter(Province == "Manitoba", Municipality != "Manitoba (provincial level)") |>
   mutate(name_clean = norm_name(Municipality)) |>
   left_join(mb_shp |> select(CSDNAME, name_clean), by = "name_clean") |>
-  select(-name_clean)
+  select(-c(name_clean, Municipality_std))
 
 # =================================================================
 # COMBINE
@@ -190,197 +197,84 @@ data.long_matched <- bind_rows(data.long_ab, data.long_sk, data.long_mb)
 data.long_matched |> filter(is.na(CSDNAME)) |> distinct(Province, Municipality)
 data.long_matched |> distinct(Province, Municipality, CSDNAME) |> count(Province, Municipality) |> filter(n > 1)
 
-# =================================================================
-# BUILD COMBINED SHAPEFILE AND JOIN
-# =================================================================
-counties_matched <- counties.phjv |>
-  filter(PRUID %in% c("46", "47", "48"), CSDNAME %in% unique(data.long_matched$CSDNAME))
+#Summarize acre data by Province, Municipality, and subinitiative
+acre.summary <- data.long_matched |>
+  group_by(Province, SubInitiativeName, CSDNAME) |>
+  summarize(total.acres = sum(Acres))
 
-# confirm CSDNAME is unique within each province's matched subset before joining
-counties_matched |> st_drop_geometry() |> count(PRUID, CSDNAME) |> filter(n > 1)
-
-counties_joined <- counties_matched |>
-  left_join(data.long_matched, by = "CSDNAME")
-
-
-
-
-
-
-
-
-
-#ALBERTA
-ab_lookup <- tribble(
-  ~Municipality_std,                                ~CSDNAME,
-  "Cypress County",                                  "Cypress County",
-  "County of Newell",                                "Newell County",
-  "Kneehill County",                                 "Kneehill County",
-  "Lacombe County",                                  "Lacombe County",
-  "Municipal District of Provost No. 52",            "Provost No. 52",
-  "Municipal District of Spirit River No. 133",      "Spirit River No. 133",
-  "Special Areas No. 2",                             "Special Area No. 2",
-  "Special Areas 2",                                 "Special Area No. 2",
-  "Sturgeon County",                                 "Sturgeon County",
-  "Westlock County",                                 "Westlock County",
-  "Vulcan County",                                   "Vulcan County",
-  "Beaver County",                                   "Beaver County",
-  "Lamont County",                                   "Lamont County",
-  "Flagstaff County",                                "Flagstaff County",
-  "Camrose County",                                  "Camrose County",
-  "County of Stettler No. 6",                        "Stettler County No. 6",
-  "Wheatland County",                                "Wheatland County",
-  "Municipal District of Foothills No. 31",          "Foothills County",
-  "Rocky View County",                               "Rocky View County",
-  "Municipal District of Willow Creek No. 26",       "Willow Creek No. 26",
-  "County of Paintearth No. 18",                     "Paintearth County No. 18",
-  "Special Areas No. 3",                             "Special Area No. 3",
-  "Special Areas No. 4",                             "Special Area No. 4",
-  "County of Vermilion River",                       "Vermilion River County",
-  "County of Warner No. 5",                          "Warner County No. 5",
-  "County of Forty Mile No. 8",                      "Forty Mile County No. 8",
-  "Red Deer County",                                 "Red Deer County",
-  "Starland County",                                 "Starland County",
-  "County of Minburn No. 27",                        "Minburn County No. 27",
-  "Municipal District of Wainwright No. 61",         "Wainwright No. 61",
-  "County of Wetaskiwin No. 10",                     "Wetaskiwin County No. 10",
-  "Clear Hills County",                              "Clear Hills",
-  "Clearwater County",                               "Clearwater County",
-  "Mountain View County",                            "Mountain View County",
-  "Smoky Lake County",                               "Smoky Lake County",
-  "County of Two Hills No. 21",                      "Two Hills County No. 21",
-  "Strathcona County",                               "Strathcona County",
-  "Athabasca County",                                "Athabasca County",
-  "Cardston County",                                 "Cardston County",
-  "Municipal District of Bonnyville No. 87",         "Bonnyville No. 87",
-  "Parkland County",                                 "Parkland County",
-  "Thorhild County",                                 "Thorhild County",
-  "Leduc County",                                    "Leduc County",
-  "Municipal District of Pincher Creek No. 9",       "Pincher Creek No. 9",
-  "County of St. Paul No. 19",                       "St. Paul County No. 19",
-  "Municipal District of Taber",                     "Taber",
-  "Ponoka County",                                   "Ponoka County"
+#create lookup table for provincial numeric codes
+prov.lookup <- tribble(
+  ~PRUID,   ~Province,
+  "46",     "Manitoba",
+  "47",     "Saskatchewan",
+  "48",     "Alberta"
 )
 
-data.long_ab <- data.long |>
-  filter(Province == "Alberta", Municipality != "Alberta (provincial level)") |>
-  left_join(ab_lookup, by = "Municipality_std")
+#join acre data with county shapefile and switch from long to wide format so there are separate columns for restoration and retention acres by county
+#start with restoration, then add retention
+county.acres <- counties.phjv |>
+  left_join(prov.lookup) |>
+  left_join(acre.summary |> filter(SubInitiativeName == "Restoration"), 
+            by = c("Province", "CSDNAME")) |>
+  select(CSDNAME, CSDTYPE, Province, total.acres) |>
+  mutate(total.acres = coalesce(total.acres, 0)) |>
+  rename(Restoration = total.acres) |>
+  left_join(acre.summary |> filter(SubInitiativeName == "Retention"), 
+            by = c("Province", "CSDNAME")) |>
+  select(-SubInitiativeName) |>
+  mutate(total.acres = coalesce(total.acres, 0)) |>
+  rename(Retention = total.acres)
 
-data.long_ab |> filter(is.na(CSDNAME))  # should be empty
+#Double check that all restoration and retention acres were linked to a county in the shapefile
+retention.csd <- county.acres |>
+  filter(Retention > 0) |>
+  pull(CSDNAME) #334 CSDs
 
-#SASKATCHEWAN
-data.long |>
-  filter(Province == "Saskatchewan") |>
-  pull(Municipality) |>
-  unique()
+retention.acres.csd <- acre.summary |>
+  filter(SubInitiativeName == "Retention") |>
+  pull(CSDNAME) #333 CSDs
 
-counties.phjv |>
-  filter(PRUID == "47") |>
-  pull(CSDNAME) |>
-  unique()
+setdiff(retention.csd, retention.acres.csd) #no difference, so one name is repeated
 
-fix_quotes <- function(x) {
-  x <- str_replace_all(x, '"S\\b', "'s")
-  x <- str_replace_all(x, '"', "'")
-  x
-}
-fix_mc <- function(x) gsub("(Mc)([a-z])", "\\1\\U\\2", x, perl = TRUE)
+county.acres |>
+  filter(Retention > 0) |>
+  group_by(CSDNAME) |>
+  summarize(n = n()) |>
+  filter(n >1)
+#Portage la Priaire is repeated because there is a city and RM with that name. Set data for city to 0 (see below...also fixing for taber)
+county.acres |> filter(CSDNAME == "Portage la Prairie")
 
-norm_name <- function(x) {
-  x |>
-    fix_quotes() |>
-    fix_mc() |>
-    str_to_lower() |>
-    str_remove_all("[[:punct:]]") |>
-    str_squish()
-}
+#repeat for Restoration
+restoration.csd <- county.acres |>
+  filter(Restoration > 0) |>
+  pull(CSDNAME) #326 CSDs
 
-# Candidate RM rows only — must have "No. <digits>" suffix
-sk_rms <- counties.phjv |>
-  filter(PRUID == "47", str_detect(CSDNAME, "No\\.\\s*\\d+$")) |>
-  mutate(
-    base_name  = str_remove(CSDNAME, "\\s*No\\.\\s*\\d+$"),
-    name_clean = norm_name(base_name)
-  )
+restoration.acres.csd <- acre.summary |>
+  filter(SubInitiativeName == "Restoration") |>
+  pull(CSDNAME) #325 CSDs
 
-data.long_sk <- data.long |>
-  filter(Province == "Saskatchewan", Municipality != "Saskatchewan (provincial level)") |>
-  mutate(name_clean = norm_name(Municipality)) |>
-  left_join(
-    sk_rms |> select(CSDNAME, name_clean),
-    by = "name_clean"
-  )
+setdiff(restoration.csd, restoration.acres.csd) #no difference, so one name is repeated
 
-# sanity check
-data.long_sk |> filter(is.na(CSDNAME))          # should be empty
-data.long_sk |>
-  distinct(Municipality, CSDNAME) |>
-  count(Municipality) |>
-  filter(n > 1)  # should be empty — check for dupes
+county.acres |>
+  filter(Restoration > 0) |>
+  group_by(CSDNAME) |>
+  summarize(n = n()) |>
+  filter(n >1)
 
-#MANITOBA
-data.long |>
-  filter(Province == "Manitoba") |>
-  pull(Municipality) |>
-  unique()
+#Taber is repeated because there is a town and Municipal district with that name. Set data for town to 0
+county.acres|> filter(CSDNAME == "Taber")
 
-counties.phjv |>
-  filter(PRUID == "46") |>
-  pull(CSDNAME) |>
-  unique()
+#set both towns to 0 acres (Assuming conservation work occured in the county)
+county.acres.fixed <- county.acres |>
+  mutate(Retention = if_else(CSDNAME == "Portage la Prairie" & CSDTYPE == "CY", 0, Retention),
+         Restoration = if_else(CSDNAME == "Taber" & CSDTYPE == "T", 0, Restoration))
 
-norm_name <- function(x) {
-  x |>
-    str_replace_all("Fran\\+.ois", "François") |>   # fix the mojibake before anything else
-    str_replace_all("-", " ") |>                      # hyphen -> space (do this before punct strip)
-    str_to_lower() |>
-    stringi::stri_trans_general("Latin-ASCII") |>      # é/ç -> e/c etc.
-    str_remove_all("[[:punct:]]") |>
-    str_squish()
-}
+#double check that the above worked
+county.acres.fixed |> filter(CSDNAME == "Portage la Prairie")
+county.acres.fixed |> filter(CSDNAME == "Taber")
 
-mb_data <- data.long |>
-  filter(Province == "Manitoba", Municipality != "Manitoba (provincial level)") |>
-  mutate(name_clean = norm_name(Municipality))
+#Inspect shapefile and export
+plot(county.acres.fixed |> select(Restoration))
+plot(county.acres.fixed |> select(Retention))
+st_write(county.acres.fixed, "Output/PHJV_AcreTracking/PHJV_Grass_acresXcounty.shp")
 
-mb_shp <- counties.phjv |>
-  filter(PRUID == "46") |>
-  mutate(name_clean = norm_name(CSDNAME)) |>
-  # prefer RM over CY/T/IRI when a name is duplicated
-  group_by(name_clean) |>
-  filter(n() == 1 | CSDTYPE == "RM") |>
-  ungroup()
-
-# confirm the join is now 1:1
-mb_shp |> count(name_clean) |> filter(n > 1)
-
-mb_matched <- mb_data |>
-  left_join(mb_shp |> select(CSDNAME, name_clean), by = "name_clean")
-
-mb_matched |> filter(is.na(CSDNAME)) |> distinct(Municipality)
-mb_matched |> distinct(Municipality, CSDNAME) |> count(Municipality) |> filter(n > 1)
-
-
-
-
-
-
-
-
-mb_shp <- counties.phjv |>
-  filter(PRUID == "46") |>
-  mutate(name_clean = norm_name(CSDNAME))
-
-mb_matched <- mb_data |>
-  left_join(mb_shp |> select(CSDNAME, name_clean), by = "name_clean")
-
-# check
-mb_matched |> filter(is.na(CSDNAME)) |> distinct(Municipality)
-mb_matched |> distinct(Municipality, CSDNAME) |> count(Municipality) |> filter(n > 1)
-
-dupe_names <- mb_shp |>
-  count(name_clean) |>
-  filter(n > 1) |>
-  pull(name_clean)
-
-mb_shp |> filter(name_clean %in% dupe_names) |> arrange(name_clean)
