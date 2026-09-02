@@ -1,6 +1,5 @@
 #This script is used for PHJV accomplishment tracking of grassland retention and restoration acres for the PHJV Implementation plan
-#The objective is to (1) determine how many acres were retained or restored and (2) how many of those acres were in close proximity to
-#Landbird priority areas.
+#The objective is to spatially join acre tracking data to the Census Subdivision shapefile for the Prairie Provinces. 
 
 library(dplyr)
 library(tidyr)
@@ -279,35 +278,7 @@ plot(county.acres.fixed |> select(Retention), reset = FALSE)
 st_write(county.acres.fixed, "Output/PHJV_AcreTracking/PHJV_Grass_acresXcounty.shp")
 
 
-#3. Estimate acre accomplishements that occured within Upland bird priority areas
-#Import upland bird priority areas
-pa <- st_read("Data/AcreTracking/Upland_smooth.shp") |>
-  st_transform(st_crs(county.acres.fixed))
 
-#query counties that overlap at least 50% of their area with Upland bird priority areas
-overlapingTest <- county.acres.fixed |>
-  mutate(total_area = st_area(geometry)) |>
-  st_filter(pa) |>
-  st_intersection(pa) |>
-  mutate(overlap_pct = as.numeric(st_area(geometry) / total_area)) |>
-  filter(overlap_pct >=0.30) |>
-  mutate(CSDUnique = paste(CSDNAME, CSDTYPE, Province, sep = "_")) |>
-  pull(CSDUnique)
-
-pa.counties <- county.acres.fixed |>
-  mutate(CSDUnique = paste(CSDNAME, CSDTYPE, Province, sep = "_")) |>
-  filter(CSDUnique %in% overlapingTest)
-
-#plot and inspect to fine-tune overlap threshold
-plot(pa.counties |> select(Retention), reset = FALSE)
-plot(st_geometry(pa), add = TRUE, border = "red", lwd = 2)
-
-#calculate acres by activity and province
-pa.acres.summary <- pa.counties |>
-  group_by(Province) |>
-  summarize(Restoration = sum(Restoration),
-            Retention = sum(Retention)) |>
-  st_drop_geometry()
 
 
 
