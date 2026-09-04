@@ -3,16 +3,18 @@
 
 library(dplyr)
 library(sf)
+library(terra)
 
 #1. Load spatial data
 #Import accomplishment acres X county
 county.acres <- st_read("Output/PHJV_AcreTracking/PHJV_Grass_acresXcounty.shp")
 
 #Import upland bird priority areas
-pa <- st_read("Data/AcreTracking/Upland_smooth.shp") |>
+pa <- st_read("Data/AcreTracking/PriorityAreas/Upland_smooth.shp") |>
   st_transform(st_crs(county.acres))
 
-#query counties that overlap at least 50% of their area with Upland bird priority areas
+#2.UPLAND BIRD PRIORITY AREAS 
+#Query counties that have at least 30% of their area overlapping with Upland bird priority areas
 overlapingTest <- county.acres |>
   mutate(total_area = st_area(geometry)) |>
   st_filter(pa) |>
@@ -31,7 +33,7 @@ plot(pa.counties |> select(Restrtn), reset = FALSE)
 plot(st_geometry(pa), add = TRUE, border = "red", lwd = 2)
 
 #export shapefile
-st_write(pa.counties, "Output/PHJV_AcreTracking/PHJV_acresXpriorityArea.shp")
+# st_write(pa.counties, "Output/PHJV_AcreTracking/PHJV_acresXpriorityArea.shp")
 
 #calculate acres by activity and province
 pa.acres.summary <- pa.counties |>
@@ -39,3 +41,40 @@ pa.acres.summary <- pa.counties |>
   summarize(Restoration = sum(Restrtn),
             Retention = sum(Retentn)) |>
   st_drop_geometry()
+
+#3. GRASSLAND SAR HIGH PRIORITY GRASSLANDS
+#Import high priority grasslands raster and reporject to match county.areas
+t.grass <- rast("Data/AcreTracking/PriorityAreas/HabitatObj_Final_wBAIS.tif")
+names(t.grass) <- "count"
+
+#Query out counties where reproject county.acres to match t.grass
+county.grass <- st_transform(county.acres, crs(t.grass))
+
+# Get raster cells intersecting each county, including the fraction of each cell covered by each county
+grass_cells <- extract(t.grass, county.grass, exact = TRUE, cells = TRUE)
+
+# Calculate grass area within each county
+grass_area <- grass_cells |>
+  filter(!is.na(count)) |>
+  group_by(ID) |>
+  summarise(
+    grass_area = sum(fraction * prod(res(t.grass)))
+  )
+
+#add grass area and country area to county.acres and calculate % overlap
+county.grass <- county.grass |>
+  mutate(ID = row_number()) |>
+  left_join(grass_area, by = "ID") |>
+  mutate(
+    grass_area = coalesce(grass_area, 0),
+    total_area = as.numeric(st_area(geometry)),
+    overlap_pct = grass_area / total_area
+  ) |>
+  select(-ID)
+max(county.grass$overlap_pct)
+
+#query out counties with > X % of their area overlapping with target grasslands
+county.grass <- county.acres |>
+  filter(overlap_pct >=0.3)
+plot(select(county.grass, overlap_pct))
+     
