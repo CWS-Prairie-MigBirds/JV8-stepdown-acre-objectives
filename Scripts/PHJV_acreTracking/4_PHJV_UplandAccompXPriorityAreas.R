@@ -71,10 +71,28 @@ county.grass <- county.grass |>
     overlap_pct = grass_area / total_area
   ) |>
   select(-ID)
+
+#ensure max percent cover is 1
 max(county.grass$overlap_pct)
+
+#plot counties with >10% cover of target grass
+plot(county.grass |>  filter(overlap_pct >=0.1) |> select(overlap_pct))
+
+#calculate acres of restoration and retention within counties that have >=10% target grass cover
+plot(county.grass |>  filter(overlap_pct >=0.1) |> select(Restrtn))
+sum(county.grass |> 
+      filter(overlap_pct >=0.1) |>
+      pull(Restrtn)
+    )
+
+plot(county.grass |>  filter(overlap_pct >=0.1) |> select(Retentn))
+sum(county.grass |> 
+      filter(overlap_pct >=0.1) |>
+      pull(Retentn)
+)
 
 #query out counties with > X % of their area overlapping with target grasslands
 county.grass <- county.acres |>
-  filter(overlap_pct >=0.3)
+  
 plot(select(county.grass, overlap_pct))
      
