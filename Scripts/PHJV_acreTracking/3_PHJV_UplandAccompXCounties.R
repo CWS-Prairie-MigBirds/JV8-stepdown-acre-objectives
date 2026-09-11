@@ -5,6 +5,7 @@ library(dplyr)
 library(tidyr)
 library(sf)
 library(stringr)
+library(stringdist)
 
 #Load PHJV acre tracking data and query out only grassland initiatives
 data <- read.csv("Data/AcreTracking/PHJV_acres_2021_2025.csv") |>
@@ -28,7 +29,11 @@ data.long <- data.grass |>
                names_to = "AcreType",
                values_to = "Acres") |>
   filter(!is.na(Acres)) |>
-  mutate(Municipality_std = str_replace(Municipality, "No\\.(\\d)", "No. \\1")) #modify municipality  names to match with county shapefile more easily
+  mutate(Municipality = recode(Municipality, "Cornwallis" = "Elton")) #these were merged and renamed to Elton
+
+
+#|>
+  #mutate(Municipality_std = str_replace(Municipality, "No\\.(\\d)", "No. \\1")) #modify municipality  names to match with county shapefile more easily
 
 #1. create summary tables for total retention and restoration acres
 acre.initiative.type <- data.long |>
@@ -47,8 +52,10 @@ acre.total <- data.long |>
 
 
 #2. Summarize spatially (by county)
+
 #load county shapefile
-counties <- st_read("Data/CanadianCounties/lcsd000b21a_e.shp")
+counties <- st_read("Data/CanadianCounties/lccs000b21a_e.shp") |>
+  left_join(prov.lookup)
 #load PHJV boundary and transcorm to CRS of counties
 phjv <- st_read("Data/JVs/jv8.shp") |>
   filter(JV == "Prairie Habitat") |>
@@ -65,16 +72,137 @@ qualifying_ids <- counties |>
   st_intersection(phjv) |>
   mutate(overlap_pct = as.numeric(st_area(geometry) / total_area)) |>
   filter(overlap_pct >=0.05) |>
-  pull(CSDUID)
+  pull(CCSUID)
+
+#create lookup table for provincial numeric codes
+prov.lookup <- tribble(
+  ~PRUID,   ~Province,
+  "46",     "Manitoba",
+  "47",     "Saskatchewan",
+  "48",     "Alberta"
+)
 
 counties.phjv <- counties |>
-  filter(CSDUID %in% qualifying_ids, PRUID != "59")
+  filter(CCSUID %in% qualifying_ids, PRUID != "59") |>
+  left_join(prov.lookup) 
 
 plot(counties.phjv |> select(PRUID), reset = FALSE)
 plot(st_geometry(phjv), add = TRUE, border = "red", lwd = 2)
 
-
 #The county names don't match well between acre tracking data and shapefile, so modify names in data and shapefile so they match (this section written by claude.ai)
+###NEW VERSION FOR CCS instead of CSD
+# --- normalization function ---
+normalize_name <- function(x) {
+  x <- x |>
+    str_replace_all(regex("fran.{1,4}ois", ignore_case = TRUE), "francois") |>
+    str_replace_all("[\"'’‘]", "") |>
+    str_replace_all(regex("^(municipal district of|county of|rural municipality of|town of|city of|village of)\\s+",
+                          ignore_case = TRUE), "") |>
+    str_replace_all(regex("special areas?", ignore_case = TRUE), "special area")
+  
+  is_special_area <- str_detect(x, regex("special area", ignore_case = TRUE))
+  x[is_special_area]  <- str_replace_all(x[is_special_area], regex("no\\.?\\s*", ignore_case = TRUE), "")
+  x[!is_special_area] <- str_replace_all(x[!is_special_area], regex("\\s*no\\.?\\s*\\d+\\b", ignore_case = TRUE), "")
+  
+  x |>
+    str_replace_all(regex("\\s+county$", ignore_case = TRUE), "") |>
+    str_replace_all("[-–—]", " ") |>
+    str_replace_all("[.,]", "") |>
+    str_squish() |>
+    str_to_lower()
+}
+
+county_xwalk <- counties.phjv |>
+  st_drop_geometry() |>
+  distinct(CCSNAME, Province) |>
+  mutate(match_key = normalize_name(CCSNAME))
+
+data_xwalk <- data.long |>
+  distinct(Municipality, Province) |>
+  mutate(match_key = normalize_name(Municipality)) 
+
+# --- diagnostics ---
+# see what's already matching
+matched        <- inner_join(data_xwalk, county_xwalk, by = "match_key")
+# what's left unmatched on each side
+unmatched_data <- anti_join(data_xwalk, county_xwalk, by = "match_key")
+unmatched_shp  <- anti_join(county_xwalk, data_xwalk, by = "match_key")
+
+#join match_key with data and shapefile
+counties.join <- counties.phjv |>
+  left_join(county_xwalk)
+
+data.join <- data.long |>
+  left_join(data_xwalk)
+
+#Summarize acre data by Province, Municipality, and subinitiative
+acre.summary <- data.join |>
+  group_by(Province, SubInitiativeName, match_key) |>
+  summarize(total.acres = sum(Acres)) |>
+  filter(!match_key %in% c("alberta (provincial level)", "saskatchewan (provincial level)", "manitoba (provincial level)"))
+
+
+#join acre data with county shapefile and switch from long to wide format so there are separate columns for restoration and retention acres by county
+#start with restoration, then add retention
+county.acres <- counties.join |>
+  left_join(acre.summary |> filter(SubInitiativeName == "Restoration"), 
+            by = c("Province", "match_key")) |>
+  select(match_key, Province, total.acres) |>
+  mutate(total.acres = coalesce(total.acres, 0)) |>
+  rename(Restoration = total.acres) |>
+  left_join(acre.summary |> filter(SubInitiativeName == "Retention"), 
+            by = c("Province", "match_key")) |>
+  select(-SubInitiativeName) |>
+  mutate(total.acres = coalesce(total.acres, 0)) |>
+  rename(Retention = total.acres)
+
+#Double check that all restoration and retention acres were linked to a county in the shapefile
+retention.ccs <- county.acres |>
+  filter(Retention > 0) |>
+  distinct(match_key, Province) #332 CSDs
+
+retention.acres.ccs <- acre.summary |>
+  filter(SubInitiativeName == "Retention") |>
+  distinct(match_key, Province) #335 CSDs
+
+#repeat for Restoration
+restoration.ccs <- county.acres |>
+  filter(Restoration > 0) |>
+  distinct(match_key, Province) #324 matchkeyXProvince
+
+restoration.acres.ccs <- acre.summary |>
+  filter(SubInitiativeName == "Restoration") |>
+  distinct(match_key, Province) #325 matchkeyXProvince
+
+anti_join(restoration.acres.ccs, restoration.ccs, by = c("match_key", "Province"))
+
+#West Interlake restoration is missing from the shapefile data because this was excluded when querying counties within PHJV, so no issue
+
+
+
+#Inspect shapefile and export
+plot(county.acres |> select(Restoration))
+plot(county.acres |> select(Retention), reset = FALSE)
+
+#export as separate shapefiles for ease of mapping in ArcPro
+st_write(county.acres |> select(match_key, Province, Restoration), "Output/PHJV_AcreTracking/PHJV_Grass_RestXcounty.shp")
+st_write(county.acres |> select(match_key, Province, Retention), "Output/PHJV_AcreTracking/PHJV_Grass_ReteXcounty.shp")
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+####Old, not needed
 
 # ---------------------------------------------------------------
 # Shared name-cleaning function (handles issues common to all provinces)
@@ -196,10 +324,7 @@ data.long_matched <- bind_rows(data.long_ab, data.long_sk, data.long_mb)
 data.long_matched |> filter(is.na(CSDNAME)) |> distinct(Province, Municipality)
 data.long_matched |> distinct(Province, Municipality, CSDNAME) |> count(Province, Municipality) |> filter(n > 1)
 
-#Summarize acre data by Province, Municipality, and subinitiative
-acre.summary <- data.long_matched |>
-  group_by(Province, SubInitiativeName, CSDNAME) |>
-  summarize(total.acres = sum(Acres))
+
 
 #create lookup table for provincial numeric codes
 prov.lookup <- tribble(
@@ -208,91 +333,6 @@ prov.lookup <- tribble(
   "47",     "Saskatchewan",
   "48",     "Alberta"
 )
-
-#join acre data with county shapefile and switch from long to wide format so there are separate columns for restoration and retention acres by county
-#start with restoration, then add retention
-county.acres <- counties.phjv |>
-  left_join(prov.lookup) |>
-  left_join(acre.summary |> filter(SubInitiativeName == "Restoration"), 
-            by = c("Province", "CSDNAME")) |>
-  select(CSDNAME, CSDTYPE, Province, total.acres) |>
-  mutate(total.acres = coalesce(total.acres, 0)) |>
-  rename(Restoration = total.acres) |>
-  left_join(acre.summary |> filter(SubInitiativeName == "Retention"), 
-            by = c("Province", "CSDNAME")) |>
-  select(-SubInitiativeName) |>
-  mutate(total.acres = coalesce(total.acres, 0)) |>
-  rename(Retention = total.acres)
-
-#Double check that all restoration and retention acres were linked to a county in the shapefile
-retention.csd <- county.acres |>
-  filter(Retention > 0) |>
-  pull(CSDNAME) #334 CSDs
-
-retention.acres.csd <- acre.summary |>
-  filter(SubInitiativeName == "Retention") |>
-  pull(CSDNAME) #333 CSDs
-
-setdiff(retention.csd, retention.acres.csd) #no difference, so one name is repeated
-
-county.acres |>
-  filter(Retention > 0) |>
-  group_by(CSDNAME) |>
-  summarize(n = n()) |>
-  filter(n >1)
-#Portage la Priaire is repeated because there is a city and RM with that name. Set data for city to 0 (see below...also fixing for taber)
-county.acres |> filter(CSDNAME == "Portage la Prairie")
-
-#repeat for Restoration
-restoration.csd <- county.acres |>
-  filter(Restoration > 0) |>
-  pull(CSDNAME) #326 CSDs
-
-restoration.acres.csd <- acre.summary |>
-  filter(SubInitiativeName == "Restoration") |>
-  pull(CSDNAME) #325 CSDs
-
-setdiff(restoration.csd, restoration.acres.csd) #no difference, so one name is repeated
-
-county.acres |>
-  filter(Restoration > 0) |>
-  group_by(CSDNAME) |>
-  summarize(n = n()) |>
-  filter(n >1)
-
-#Taber is repeated because there is a town and Municipal district with that name. Set data for town to 0
-county.acres|> filter(CSDNAME == "Taber")
-
-#set both towns to 0 acres (Assuming conservation work occured in the county)
-county.acres.fixed <- county.acres |>
-  mutate(Retention = if_else(CSDNAME == "Portage la Prairie" & CSDTYPE == "CY", 0, Retention),
-         Restoration = if_else(CSDNAME == "Taber" & CSDTYPE == "T", 0, Restoration))
-
-#double check that the above worked
-county.acres.fixed |> filter(CSDNAME == "Portage la Prairie")
-county.acres.fixed |> filter(CSDNAME == "Taber")
-
-#Inspect shapefile and export
-plot(county.acres.fixed |> select(Restoration))
-plot(county.acres.fixed |> select(Retention), reset = FALSE)
-st_write(county.acres.fixed, "Output/PHJV_AcreTracking/PHJV_Grass_acresXcounty.shp")
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 
