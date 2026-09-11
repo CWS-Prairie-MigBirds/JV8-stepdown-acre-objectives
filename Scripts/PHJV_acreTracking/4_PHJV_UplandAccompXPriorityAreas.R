@@ -6,8 +6,14 @@ library(sf)
 library(terra)
 
 #1. Load spatial data
-#Import accomplishment acres X county
-county.acres <- st_read("Output/PHJV_AcreTracking/PHJV_Grass_acresXcounty.shp")
+#Import accomplishment acres X county and merge
+county.rest <- st_read("Output/PHJV_AcreTracking/PHJV_Grass_RestXcounty.shp") |>
+  rename("match_key" = "mtch_ky",
+         "Province" = "Provinc",
+         "Restoration" = "Restrtn")
+county.rete <- st_read("Output/PHJV_AcreTracking/PHJV_Grass_ReteXcounty.shp")
+
+county.acres <- left_join(county.rest, st_drop_geometry(county.rete))
 
 #Import upland bird priority areas
 pa <- st_read("Data/AcreTracking/PriorityAreas/Upland_smooth.shp") |>
@@ -21,25 +27,26 @@ overlapingTest <- county.acres |>
   st_intersection(pa) |>
   mutate(overlap_pct = as.numeric(st_area(geometry) / total_area)) |>
   filter(overlap_pct >=0.30) |>
-  mutate(CSDUnique = paste(CSDNAME, CSDTYPE, Provinc, sep = "_")) |>
+  mutate(CSDUnique = paste(match_key, Province, sep = "_")) |>
   pull(CSDUnique)
 
 pa.counties <- county.acres |>
-  mutate(CSDUnique = paste(CSDNAME, CSDTYPE, Provinc, sep = "_")) |>
+  mutate(CSDUnique = paste(match_key, Province, sep = "_")) |>
   filter(CSDUnique %in% overlapingTest)
 
 #plot and inspect to fine-tune overlap threshold
-plot(pa.counties |> select(Restrtn), reset = FALSE)
+plot(pa.counties |> select(Restoration), reset = FALSE)
 plot(st_geometry(pa), add = TRUE, border = "red", lwd = 2)
 
 #export shapefile
-# st_write(pa.counties, "Output/PHJV_AcreTracking/PHJV_acresXpriorityArea.shp")
+st_write(pa.counties |> select(match_key, Province, Restoration), "Output/PHJV_AcreTracking/PHJV_RestXpriorityArea.shp")
+st_write(pa.counties |> select(match_key, Province, Retention), "Output/PHJV_AcreTracking/PHJV_ReteXpriorityArea.shp")
 
 #calculate acres by activity and province
 pa.acres.summary <- pa.counties |>
-  group_by(Provinc) |>
-  summarize(Restoration = sum(Restrtn),
-            Retention = sum(Retentn)) |>
+  group_by(Province) |>
+  summarize(Restoration = sum(Restoration),
+            Retention = sum(Retention)) |>
   st_drop_geometry()
 
 #3. GRASSLAND SAR HIGH PRIORITY GRASSLANDS
