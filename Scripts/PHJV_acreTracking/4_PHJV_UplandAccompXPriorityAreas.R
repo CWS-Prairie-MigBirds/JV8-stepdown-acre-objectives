@@ -39,8 +39,8 @@ plot(pa.counties |> select(Restoration), reset = FALSE)
 plot(st_geometry(pa), add = TRUE, border = "red", lwd = 2)
 
 #export shapefile
-st_write(pa.counties |> select(match_key, Province, Restoration), "Output/PHJV_AcreTracking/PHJV_RestXpriorityArea.shp")
-st_write(pa.counties |> select(match_key, Province, Retention), "Output/PHJV_AcreTracking/PHJV_ReteXpriorityArea.shp")
+# st_write(pa.counties |> select(match_key, Province, Restoration), "Output/PHJV_AcreTracking/PHJV_RestXpriorityArea.shp")
+# st_write(pa.counties |> select(match_key, Province, Retention), "Output/PHJV_AcreTracking/PHJV_ReteXpriorityArea.shp")
 
 #calculate acres by activity and province
 pa.acres.summary <- pa.counties |>
@@ -54,7 +54,7 @@ pa.acres.summary <- pa.counties |>
 t.grass <- rast("Data/AcreTracking/PriorityAreas/HabitatObj_Final_wBAIS.tif")
 names(t.grass) <- "count"
 
-#Query out counties where reproject county.acres to match t.grass
+#reproject county.acres to match t.grass
 county.grass <- st_transform(county.acres, crs(t.grass))
 
 # Get raster cells intersecting each county, including the fraction of each cell covered by each county
@@ -62,7 +62,7 @@ grass_cells <- extract(t.grass, county.grass, exact = TRUE, cells = TRUE)
 
 # Calculate grass area within each county
 grass_area <- grass_cells |>
-  filter(!is.na(count)) |>
+  filter(!is.na(HabitatObj_Final_wBAIS)) |>
   group_by(ID) |>
   summarise(
     grass_area = sum(fraction * prod(res(t.grass)))
@@ -83,23 +83,41 @@ county.grass <- county.grass |>
 max(county.grass$overlap_pct)
 
 #plot counties with >10% cover of target grass
-plot(county.grass |>  filter(overlap_pct >=0.1) |> select(overlap_pct))
+plot(county.grass |> filter(overlap_pct >=0.1) |> select(overlap_pct))
 
-#calculate acres of restoration and retention within counties that have >=10% target grass cover
-plot(county.grass |>  filter(overlap_pct >=0.1) |> select(Restrtn))
+#calculate acres of restoration and retention within counties that have >=10% target grass cover by province
+plot(county.grass |>  filter(overlap_pct >=0.1) |> select(Restoration))
 sum(county.grass |> 
       filter(overlap_pct >=0.1) |>
-      pull(Restrtn)
+      pull(Restoration)
     )
 
-plot(county.grass |>  filter(overlap_pct >=0.1) |> select(Retentn))
+plot(county.grass |>  filter(overlap_pct >=0.1) |> select(Retention))
 sum(county.grass |> 
       filter(overlap_pct >=0.1) |>
       pull(Retentn)
 )
 
-#query out counties with > X % of their area overlapping with target grasslands
-county.grass <- county.acres |>
-  
-plot(select(county.grass, overlap_pct))
+tg.acres.summary <- county.grass |>
+  filter(overlap_pct >=0.1) |>
+  group_by(Province) |>
+  summarize(Restoration = sum(Restoration),
+            Retention = sum(Retention)) |>
+  st_drop_geometry()
+
+#export shapefile
+st_write(
+  county.grass |>
+    filter(overlap_pct >=0.1) |>
+    select(match_key, Province, Restoration),
+  "Output/PHJV_AcreTracking/PHJV_RestXtargetGrass.shp"
+  )
+
+st_write(
+  county.grass |>
+    filter(overlap_pct >=0.1) |>
+    select(match_key, Province, Retention),
+  "Output/PHJV_AcreTracking/PHJV_RetenXtargetGrass.shp"
+)
+
      
