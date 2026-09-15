@@ -24,6 +24,7 @@ data.grass <- data |>
   select(InitiativeSubProgramName, DirectAmount, ExtensionAmount, PolicyAmount, ReportingType, SubInitiativeName, Province, FiscalYear, Agency, Landscape, Municipality)
 
 #change to long format
+#Uplands only
 data.long <- data.grass |>
   pivot_longer(cols = c(DirectAmount, ExtensionAmount, PolicyAmount),
                names_to = "AcreType",
@@ -31,6 +32,13 @@ data.long <- data.grass |>
   filter(!is.na(Acres)) |>
   mutate(Municipality = recode(Municipality, "Cornwallis" = "Elton")) #these were merged and renamed to Elton
 
+#wetlands and uplands
+dataFull.long <- data |>
+  pivot_longer(cols = c(DirectAmount, ExtensionAmount, PolicyAmount),
+               names_to = "AcreType",
+               values_to = "Acres") |>
+  filter(!is.na(Acres)) |>
+  mutate(Municipality = recode(Municipality, "Cornwallis" = "Elton")) #these were merged and renamed to Elton
 
 #|>
   #mutate(Municipality_std = str_replace(Municipality, "No\\.(\\d)", "No. \\1")) #modify municipality  names to match with county shapefile more easily
@@ -46,12 +54,29 @@ acre.initiative <- data.long |>
   summarize(sum(Acres)) |>
   arrange(Province, SubInitiativeName)
 
+write.csv(acre.initiative, "Output/PHJV_uplandAcresXprovince.csv", row.names = F)
+
+acreFull.initiative <- dataFull.long |>
+  group_by(Province, SubInitiativeName) |>
+  summarize(sum(Acres)) |>
+  arrange(Province, SubInitiativeName)
+
+write.csv(acreFull.initiative, "Output/PHJV_AllAcresXprovince.csv", row.names = F)
+
 acre.total <- data.long |>
   group_by(SubInitiativeName) |>
   summarize(sum(Acres))
 
 
 #2. Summarize spatially (by county)
+
+#create lookup table for provincial numeric codes
+prov.lookup <- tribble(
+  ~PRUID,   ~Province,
+  "46",     "Manitoba",
+  "47",     "Saskatchewan",
+  "48",     "Alberta"
+)
 
 #load county shapefile
 counties <- st_read("Data/CanadianCounties/lccs000b21a_e.shp") |>
@@ -74,13 +99,6 @@ qualifying_ids <- counties |>
   filter(overlap_pct >=0.05) |>
   pull(CCSUID)
 
-#create lookup table for provincial numeric codes
-prov.lookup <- tribble(
-  ~PRUID,   ~Province,
-  "46",     "Manitoba",
-  "47",     "Saskatchewan",
-  "48",     "Alberta"
-)
 
 counties.phjv <- counties |>
   filter(CCSUID %in% qualifying_ids, PRUID != "59") |>
@@ -117,26 +135,45 @@ county_xwalk <- counties.phjv |>
   distinct(CCSNAME, Province) |>
   mutate(match_key = normalize_name(CCSNAME))
 
+#uplands only
 data_xwalk <- data.long |>
   distinct(Municipality, Province) |>
-  mutate(match_key = normalize_name(Municipality)) 
+  mutate(match_key = normalize_name(Municipality))
+
+#uplands and wetlands
+dataFull_xwalk <- dataFull.long |>
+  distinct(Municipality, Province) |>
+  mutate(match_key = normalize_name(Municipality))
 
 # --- diagnostics ---
 # see what's already matching
-matched        <- inner_join(data_xwalk, county_xwalk, by = "match_key")
+matched <- inner_join(data_xwalk, county_xwalk, by = c("match_key", "Province"))
+matchedFull <- inner_join(dataFull_xwalk, county_xwalk, by = c("match_key", "Province"))
 # what's left unmatched on each side
-unmatched_data <- anti_join(data_xwalk, county_xwalk, by = "match_key")
-unmatched_shp  <- anti_join(county_xwalk, data_xwalk, by = "match_key")
+unmatched_data <- anti_join(data_xwalk, county_xwalk, by = c("match_key", "Province"))
+unmatched_shp <- anti_join(county_xwalk, data_xwalk, by = c("match_key", "Province"))
 
 #join match_key with data and shapefile
 counties.join <- counties.phjv |>
   left_join(county_xwalk)
 
+#upland only
 data.join <- data.long |>
   left_join(data_xwalk)
 
+#upland and wetland
+dataFull.join <- dataFull.long |>
+  left_join(dataFull_xwalk)
+
 #Summarize acre data by Province, Municipality, and subinitiative
+#Upland only
 acre.summary <- data.join |>
+  group_by(Province, SubInitiativeName, match_key) |>
+  summarize(total.acres = sum(Acres)) |>
+  filter(!match_key %in% c("alberta (provincial level)", "saskatchewan (provincial level)", "manitoba (provincial level)"))
+
+#upland and wetland
+acreFull.summary <- dataFull.join |>
   group_by(Province, SubInitiativeName, match_key) |>
   summarize(total.acres = sum(Acres)) |>
   filter(!match_key %in% c("alberta (provincial level)", "saskatchewan (provincial level)", "manitoba (provincial level)"))
@@ -144,6 +181,7 @@ acre.summary <- data.join |>
 
 #join acre data with county shapefile and switch from long to wide format so there are separate columns for restoration and retention acres by county
 #start with restoration, then add retention
+#Upland only
 county.acres <- counties.join |>
   left_join(acre.summary |> filter(SubInitiativeName == "Restoration"), 
             by = c("Province", "match_key")) |>
@@ -151,6 +189,19 @@ county.acres <- counties.join |>
   mutate(total.acres = coalesce(total.acres, 0)) |>
   rename(Restoration = total.acres) |>
   left_join(acre.summary |> filter(SubInitiativeName == "Retention"), 
+            by = c("Province", "match_key")) |>
+  select(-SubInitiativeName) |>
+  mutate(total.acres = coalesce(total.acres, 0)) |>
+  rename(Retention = total.acres)
+
+#upland and wetland
+countyFull.acres <- counties.join |>
+  left_join(acreFull.summary |> filter(SubInitiativeName == "Restoration"), 
+            by = c("Province", "match_key")) |>
+  select(match_key, Province, total.acres) |>
+  mutate(total.acres = coalesce(total.acres, 0)) |>
+  rename(Restoration = total.acres) |>
+  left_join(acreFull.summary |> filter(SubInitiativeName == "Retention"), 
             by = c("Province", "match_key")) |>
   select(-SubInitiativeName) |>
   mutate(total.acres = coalesce(total.acres, 0)) |>
@@ -182,12 +233,16 @@ anti_join(restoration.acres.ccs, restoration.ccs, by = c("match_key", "Province"
 
 #Inspect shapefile and export
 plot(county.acres |> select(Restoration))
-plot(county.acres |> select(Retention), reset = FALSE)
+plot(countyFull.acres |> select(Retention), reset = FALSE)
 
 #export as separate shapefiles for ease of mapping in ArcPro
+#upland only
 st_write(county.acres |> select(match_key, Province, Restoration), "Output/PHJV_AcreTracking/PHJV_Grass_RestXcounty.shp")
 st_write(county.acres |> select(match_key, Province, Retention), "Output/PHJV_AcreTracking/PHJV_Grass_ReteXcounty.shp")
 
+#upland and wetland
+st_write(countyFull.acres |> select(match_key, Province, Restoration), "Output/PHJV_AcreTracking/PHJV_All_RestXcounty.shp")
+st_write(countyFull.acres |> select(match_key, Province, Retention), "Output/PHJV_AcreTracking/PHJV_All_ReteXcounty.shp")
 
 
 
